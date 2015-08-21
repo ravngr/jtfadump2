@@ -1,4 +1,4 @@
-jtfadum 2
+jtfadump 2
 ========
 
 Some code I glued together for research purposes (as in actual research, not to see if it worked, although that was a nice byproduct).
