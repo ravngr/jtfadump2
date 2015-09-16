@@ -4,7 +4,7 @@ import time
 __author__ = 'chris'
 
 
-class OutputLimit():
+class OutputLimit(object):
     def __init__(self, minimum, maximum):
         self._minimum = minimum
         self._maximum = maximum
@@ -18,14 +18,14 @@ class OutputLimit():
             return value
 
 
-class PIDParameter():
+class PIDParameter(object):
     def __init__(self, p, i, d):
         self.p = p
         self.i = i
         self.d = d
 
 
-class PIDRegulator():
+class PIDRegulator(object):
     def __init__(self, input_function, output_function, pid_parameters, input_function_kwargs=None,
                  output_function_kwargs=None, initial_target=0, invert=False, output_limit=None, period=1):
         self._input_function = input_function
@@ -52,6 +52,9 @@ class PIDRegulator():
         # Create and start the thread
         self._thread = threading.Thread(target=self._update)
         self._thread.daemon = True
+
+    def __del__(self):
+        self.stop()
 
     def start(self):
         self._thread.start()
