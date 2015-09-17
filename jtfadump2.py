@@ -26,7 +26,7 @@ __email__ = 'dev@ravngr.com'
 __status__ = 'Development'
 
 
-class ExperimentNode():
+class ExperimentNode:
     def __init__(self, exp, children=None):
         self.experiment = exp
 
@@ -38,20 +38,19 @@ class ExperimentNode():
             self.size = 1
 
 
-def _generate_module(config, global_config, parent, *args, **kwargs):
-    module_class = config.pop('class')
-
-    instance_config = {}
+def _generate_module_args(global_config, parent, *args, **kwargs):
+    class_name = kwargs.pop('class')
 
     # If module has global configuration options then load those first
-    if module_class in global_config:
-        instance_config.update(global_config[module_class])
+    if class_name in global_config:
+        instance_config = global_config[class_name]
 
-    # Add local configuration
-    instance_config.update(config)
+        # Overwrite global options with parameters for this instance
+        instance_config.update(kwargs)
+    else:
+        instance_config = kwargs
 
-    # Instantiate class
-    return util.class_from_str(module_class, parent)(instance_config, *args, **kwargs)
+    return util.class_instance_from_dict(class_name, parent, *args, **instance_config)
 
 
 def _generate_experiment_tree(module_config, global_module_config):
@@ -147,7 +146,12 @@ def main():
 
     root_logger = logging.getLogger(__name__)
 
-    root_logger.info("jtfadump2 | git hash: {}".format(util.get_git_hash()))
+    try:
+        git_hash = util.get_git_hash()
+    except OSError:
+        git_hash = 'not found'
+
+    root_logger.info("jtfadump2 | git hash: {}".format(git_hash))
     root_logger.info("python {}".format(sys.version))
 
     for m in [('pyserial', serial.VERSION), (pyvisa.__name__, pyvisa.__version__), ('pyyaml', yaml.__version__)]:
@@ -187,14 +191,16 @@ def main():
     export_modules = []
 
     for module_config in config.pop('capture'):
-        capture_modules.append(_generate_module(module_config, global_module_config, capture.__name__))
+        capture_modules.append(_generate_module_args(global_module_config, capture.__name__, **module_config))
 
     for module_config in config.pop('export'):
-        export_modules.append(_generate_module(module_config, global_module_config, exporter.__name__, result_path))
+        export_modules.append(_generate_module_args(global_module_config, exporter.__name__,
+                                                    result_directory=result_path, **module_config))
 
     if 'post' in config and config['post']:
         for module_config in config.pop('post'):
-            post_process_modules.append(_generate_module(module_config, global_module_config, post_process.__name__))
+            post_process_modules.append(_generate_module_args(global_module_config, post_process.__name__,
+                                                              **module_config))
 
     capture_module_count = len(capture_modules)
     post_process_module_count = len(post_process_modules)

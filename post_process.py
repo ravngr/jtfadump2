@@ -7,10 +7,8 @@ class PostProcessorException(Exception):
     pass
 
 
-class PostProcessor():
-    def __init__(self, config):
-        self._config = config
-
+class PostProcessor(object):
+    def __init__(self):
         self._log = logging.getLogger(type(self).__name__)
 
     def process(self, data):
@@ -18,39 +16,42 @@ class PostProcessor():
 
 
 class ThresholdPostProcessor(PostProcessor):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, field, unit=None, level='WARNING', limit_min=None, limit_max=None, exception=False):
+        super().__init__()
 
-        self._limit = []
-
-        for threshold in config['threshold']:
-            level = logging.getLevelName(threshold.get('action', 'WARNING'))
-
-            self._limit.append({
-                'field': threshold.get('field'),
-                'level': level,
-                'exception': threshold.get('exception', False),
-                'min': threshold.get('min', None),
-                'max': threshold.get('max', None)
-            })
+        self._field = field
+        self._unit = unit
+        self._level = logging.getLevelName(level)
+        self._exception = exception
+        self._min = limit_min
+        self._max = limit_max
 
     def process(self, data):
-        for limit in self._limit:
-            if limit['field'] in data.keys():
-                field_data = data[limit['field']]
+        if self._field in data.keys():
+            value = data[self._field]
 
-                limit_min = limit['min'] and field_data < limit['min']
-                limit_max = limit['max'] and field_data > limit['max']
+            limit_min = self._min and value < self._min
+            limit_max = self._max and value > self._max
 
-                if limit_min:
-                    logging.log(limit['level'], "Field {} = {} is under threshold {}".format(limit['field'], field_data,
-                                                                                             limit['min']))
+            log_dict = {
+                'field': self._field,
+                'value': value,
+                'unit': ' ' + self._unit if self._unit else '',
+                'min': self._min,
+                'max': self._max
+            }
 
-                if limit_max:
-                    logging.log(limit['level'], "Field {} = {} is over threshold {}".format(limit['field'], field_data,
-                                                                                            limit['max']))
+            if limit_min:
+                self._log.log(self._level, "Data field {field} is under threshold {value}{unit} < {min}{unit}".format(
+                    **log_dict))
 
-                if (limit_min or limit_max) and limit['exception']:
-                    raise PostProcessorException('Data field outside threshold range')
+            if limit_max:
+                self._log.log(self._level, "Data field {field} is over threshold {value}{unit} > {max}{unit}".format(
+                    **log_dict))
+
+            if (limit_min or limit_max) and self._exception:
+                raise PostProcessorException('Data field outside threshold range')
+        else:
+            self._log.warn("Data field {} not present in capture".format(self._field))
 
         return data

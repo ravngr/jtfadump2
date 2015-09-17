@@ -1,5 +1,8 @@
 import logging
 import random
+import threading
+import time
+import util
 
 __author__ = 'chris'
 
@@ -8,12 +11,10 @@ class CaptureException(Exception):
     pass
 
 
-class Capture():
-    def __init__(self, config):
-        self._config = config
-
-        self._label = config.pop('label')
-        self._raw = config.get('raw', False)
+class Capture(object):
+    def __init__(self, label, raw=False):
+        self._label = label
+        self._raw = raw
 
         self._log = logging.getLogger(type(self).__name__)
         self._log.debug("Created capture module {} ({})".format(type(self).__name__, self._label))
@@ -76,26 +77,28 @@ class Capture():
 
 
 class FrequencyCounterCapture(Capture):
-    pass
+    def __init__(self, label, raw=False):
+        super().__init__(label, raw)
 
 
 class MKSSerialCapture(Capture):
-    pass
+    def __init__(self, label, raw=False):
+        super().__init__(label, raw)
 
 
 class NullCapture(Capture):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, label, raw=False):
+        super().__init__(label, raw)
 
     def _get_data(self, experiment_stack):
         return {}
 
 
 class PulseCapture(Capture):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, label, raw=False, channel=[1]):
+        super().__init__(label, raw)
 
-        self._channels = config.get('channel', [1])
+        self._channels = channel
 
     def _get_data(self, experiment_stack):
         return {
@@ -105,11 +108,10 @@ class PulseCapture(Capture):
 
 
 class RandomCapture(Capture):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, label, raw=False, length=1):
+        super().__init__(label, raw)
 
-        self._length = config.get('length', 1)
-        self._raw = config.get('raw', False)
+        self._length = length
 
     def _get_data(self, experiment_stack):
         if self._raw:
@@ -133,4 +135,44 @@ class RandomCapture(Capture):
 
 
 class VNACapture(Capture):
-    pass
+    def __init__(self, label, raw=False):
+        super().__init__(label, raw)
+
+
+class ContinuousCaptureWrapper(Capture):
+    def __init__(self, label, interval, wrapped_class, *args, **kwargs):
+        super().__init__(label)
+
+        self._interval = interval
+
+        # Create child class
+        self._wrapped_class = util.class_instance_from_dict(wrapped_class, __name__, *args, **kwargs)
+
+        # Buffer for data from capture
+        self._buffer = []
+        self._buffer_lock = threading.RLock()
+
+        self._stop = threading.Event()
+
+        self._thread = threading.Thread(target=self._update)
+        self._thread.daemon = True
+        self._thread.start()
+
+    def __del__(self):
+        self._stop.set()
+        self._thread.join()
+
+    def _get_data(self, experiment_stack):
+        with self._buffer_lock:
+            out_buffer = self._buffer
+
+            self._buffer = []
+
+            return out_buffer
+
+    def _update(self):
+        while not self._stop.is_set():
+            with self._buffer_lock:
+                self._capture._get_data()
+
+            time.sleep(self._interval)

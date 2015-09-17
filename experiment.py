@@ -11,7 +11,7 @@ class ExperimentConfigurationException(Exception):
     pass
 
 
-class Experiment():
+class Experiment(object):
     def __init__(self, config):
         self._config = config
 
@@ -19,8 +19,8 @@ class Experiment():
         self._primary = config.get('primary', True)
 
         self._log = logging.getLogger(type(self).__name__)
-        self._log.debug("Created experiment module {} ({}{})".format(type(self).__name__, '✓ ' if self._primary else '',
-                                                                     self._label))
+        self._log.debug("Created Experiment module {} ({} primary key)".format(self._label,
+                                                                               '✓' if self._primary else '✗'))
 
     def step(self):
         raise NotImplementedError()
@@ -76,7 +76,7 @@ class Experiment():
         raise NotImplementedError()
 
 
-class SteppedExperiment(Experiment):
+class _SteppedExperiment(Experiment):
     def __init__(self, config, field):
         super().__init__(config)
 
@@ -124,7 +124,7 @@ class SteppedExperiment(Experiment):
         return self._current_step
 
 
-class IncrementExperiment(SteppedExperiment):
+class _IncrementExperiment(_SteppedExperiment):
     def __init__(self, config, field):
         super().__init__(config, field)
 
@@ -140,7 +140,7 @@ class IncrementExperiment(SteppedExperiment):
         return int(self._config.get(self._field, 1))
 
 
-class FlowExperiment(SteppedExperiment):
+class FlowExperiment(_SteppedExperiment):
     def __init__(self, config):
         super().__init__(config, 'flow_rate')
 
@@ -157,7 +157,7 @@ class FlowExperiment(SteppedExperiment):
 
         flow_rate = self._get_flow()
 
-        self._log.info("Flow rate: {}sccm".format('sccm, '.join([str(x) for x in flow_rate])))
+        self._log.info("Flow rate: {} sccm".format(' sccm, '.join([str(x) for x in flow_rate])))
 
     def stop(self):
         pass
@@ -185,7 +185,7 @@ class FlowExperiment(SteppedExperiment):
         return 'flow',
 
 
-class HumidityExperiment(SteppedExperiment):
+class HumidityExperiment(_SteppedExperiment):
     def __init__(self, config):
         super().__init__(config, 'vgen_temperature')
 
@@ -201,7 +201,7 @@ class HumidityExperiment(SteppedExperiment):
 
         temperature = self._get_vgen_temperature_target()
 
-        self._log.info("Saturator: {}°C, Condenser: {}°C".format(temperature[0], temperature[1]))
+        self._log.info("Saturator: {} °C, Condenser: {} °C".format(temperature[0], temperature[1]))
 
     def stop(self):
         pass
@@ -236,7 +236,7 @@ class HumidityExperiment(SteppedExperiment):
         return 'relative_humidity',
 
 
-class RegulatedTemperatureExperiment(SteppedExperiment):
+class RegulatedTemperatureExperiment(_SteppedExperiment):
     def __init__(self, config):
         super().__init__(config, 'temperature')
 
@@ -270,9 +270,10 @@ class RegulatedTemperatureExperiment(SteppedExperiment):
 
         device_temperature = self._get_temperature_target()
 
-        self._log.info("Device temperature: {}°C".format(device_temperature))
+        self._log.info("Device temperature: {} °C".format(device_temperature))
 
     def stop(self):
+        # TODO Bring controller down safely
         pass
 
     def set_resume_state(self, state):
@@ -287,7 +288,9 @@ class RegulatedTemperatureExperiment(SteppedExperiment):
         state = super()._get_state()
         state.update({
             'temperature': 0,
-            'temperature_target': self._get_temperature_target()
+            'temperature_target': self._get_temperature_target(),
+            'supply_voltage': 0,
+            'supply_current': 0
         })
 
         return state
@@ -296,7 +299,7 @@ class RegulatedTemperatureExperiment(SteppedExperiment):
         return 'temperature',
 
 
-class TimeExperiment(SteppedExperiment):
+class TimeExperiment(_SteppedExperiment):
     def __init__(self, config):
         super().__init__(config, 'delay')
 
@@ -431,3 +434,7 @@ class SynchronisedTimeExperiment(TimeExperiment):
 
     def _primary_key_field(self):
         return None
+
+
+class ExperimentStateExperiment(Experiment):
+    pass
