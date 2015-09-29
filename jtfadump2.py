@@ -2,6 +2,7 @@
 # -- coding: utf-8 --
 
 import argparse
+import code
 import logging
 import logging.config
 import os
@@ -101,6 +102,9 @@ def main():
     parse.set_defaults(display_visa=False)
     parse.add_argument('-q', '--quiet', help='Suppress info logging output', dest='display_quiet', action='store_true')
     parse.set_defaults(display_visa=False)
+    parse.add_argument('-i', '--interactive', help='Drop to interactive python shell on error', dest='interactive',
+                       action='store_true')
+    parse.set_defaults(interactive=False)
 
     args = parse.parse_args()
 
@@ -300,7 +304,12 @@ def main():
 
         root_logger.info('Experiment finished normally')
     except:
-        root_logger.exception('Caught exception in main loop', exc_info=True)
+        root_logger.exception('Caught exception', exc_info=True)
+
+        if args.interactive:
+            # Drop to interactive shell on error
+            code.interact(local=locals())
+
         raise
     finally:
         # Stop all running experiments
