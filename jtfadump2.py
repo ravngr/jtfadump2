@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -- coding: utf-8 --
 
 import argparse
@@ -16,6 +16,7 @@ import yaml
 import capture
 import experiment
 import exporter
+import post_export
 import post_process
 import util
 
@@ -68,7 +69,7 @@ def _generate_experiment_tree(module_config, global_module_config):
         for child in config_child:
             child_nodes.append(_generate_experiment_tree(child, global_module_config))
 
-    return ExperimentNode(c(config), child_nodes)
+    return ExperimentNode(c(**config), child_nodes)
 
 
 def main():
@@ -88,6 +89,9 @@ def main():
 
     module_list += '\n\nExporter Modules:\n\t'
     module_list += '\n\t'.join(util.get_module_subclasses(exporter, exporter.Exporter))
+
+    module_list += '\n\nPost-Exporter Modules:\n\t'
+    module_list += '\n\t'.join(util.get_module_subclasses(post_export, post_export.PostExporter))
 
     # Parse command line arguments
     parse = argparse.ArgumentParser(description='jtfadump2 Experiment System',
@@ -111,7 +115,7 @@ def main():
     # Get experiment prefix
     experiment_name = args.name.strip().replace(' ', '_')
 
-    # Load configuration file(s)
+    # Load configuration YAML file(s)
     config = {}
 
     for f in args.config:
@@ -190,30 +194,13 @@ def main():
     global_module_config = config.pop('modules')
 
     # Create modules
+    experiment_nodes = []
     capture_modules = []
     post_process_modules = []
     export_modules = []
-
-    for module_config in config.pop('capture'):
-        capture_modules.append(_generate_module_args(global_module_config, capture.__name__, **module_config))
-
-    for module_config in config.pop('export'):
-        export_modules.append(_generate_module_args(global_module_config, exporter.__name__,
-                                                    result_directory=result_path, **module_config))
-
-    if 'post' in config and config['post']:
-        for module_config in config.pop('post'):
-            post_process_modules.append(_generate_module_args(global_module_config, post_process.__name__,
-                                                              **module_config))
-
-    capture_module_count = len(capture_modules)
-    post_process_module_count = len(post_process_modules)
-    export_module_count = len(export_modules)
-
-    # Connect to all hardware
+    post_export_modules = []
 
     # Setup experiment stack
-    experiment_nodes = []
     experiment_module_count = 0
 
     for node_config in config.pop('experiment'):
@@ -222,6 +209,29 @@ def main():
         experiment_module_count += node.size
 
         experiment_nodes.append(node)
+
+    # Generate other modules
+    for module_config in config.pop('capture'):
+        capture_modules.append(_generate_module_args(global_module_config, capture.__name__, **module_config))
+
+    if 'post_process' in config and config['post_process']:
+        for module_config in config.pop('post_process'):
+            post_process_modules.append(_generate_module_args(global_module_config, post_process.__name__,
+                                                              **module_config))
+
+    for module_config in config.pop('export'):
+        export_modules.append(_generate_module_args(global_module_config, exporter.__name__,
+                                                    result_directory=result_path, **module_config))
+
+    if 'post_export' in config and config['post_export']:
+        for module_config in config.pop('post_export'):
+            post_export_modules.append(_generate_module_args(global_module_config, post_export.__name__,
+                                                             result_directory=result_path, **module_config))
+
+    capture_module_count = len(capture_modules)
+    post_process_module_count = len(post_process_modules)
+    export_module_count = len(export_modules)
+    post_export_module_count = len(post_export_modules)
 
     # Note loaded modules
     root_logger.info("Loaded {} experiment module{}".format(experiment_module_count,
@@ -232,6 +242,8 @@ def main():
                                                               's' if post_process_module_count is not 1 else ''))
     root_logger.info("Loaded {} export module{}".format(export_module_count,
                                                         's' if export_module_count is not 1 else ''))
+    root_logger.info("Loaded {} post-export module{}".format(post_export_module_count,
+                                                             's' if post_export_module_count is not 1 else ''))
 
     # Track running experiments in order to stop them properly
     running_experiments = []
@@ -292,8 +304,17 @@ def main():
                                 root_logger.warn("PostProcessor {} returning no data".format(p.__name__))
 
                     # Export data
+                    exported_files = []
+
                     for e in export_modules:
-                        e.export(capture_id_short, data)
+                        f = e.export(capture_id_short, data)
+
+                        if f is not None:
+                            exported_files.extend(f)
+
+                    # Post-export
+                    for pe in post_export_modules:
+                        pe.process(exported_files)
             else:
                 # Remove experiment both from the stack and from the active list
                 experiment_nodes.pop(0)
@@ -308,6 +329,7 @@ def main():
 
         if args.interactive:
             # Drop to interactive shell on error
+            root_logger.warn('Dropping to interactive shell')
             code.interact(local=locals())
 
         raise

@@ -70,10 +70,10 @@ class RS232Connector(Connector):
     _retry_delay = 1
     _retry_attempt = 3
 
-    def __init__(self, name, port, **kwargs):
+    def __init__(self, name, **kwargs):
         super().__init__(name)
 
-        self._serial = serial.Serial(port, **kwargs)
+        self._serial = serial.Serial(**kwargs)
 
     def get_address(self):
         return self._serial.name
@@ -112,6 +112,8 @@ class RS232Connector(Connector):
 class RS232toRS485BusConnector(RS232Connector):
     def __init__(self, name, port, **kwargs):
         super().__init__(name, port, **kwargs)
+
+
 
 
 class RS485AdapterConnector(Connector):
@@ -177,7 +179,7 @@ class VISAConnector(Connector):
         return 'ON' if value else 'OFF'
 
 
-class VISATerminatorWrapper():
+class VISATerminatorWrapper(object):
     def __init__(self, visa_connector, term_char_read, term_char_write):
         self._visa_connector = visa_connector
         self._term_char = (term_char_read, term_char_write)
@@ -265,6 +267,7 @@ class Hardware(object):
         self._lock = threading.RLock()
 
         self._log = logging.getLogger(type(self).__name__)
+        self._log.info("Hardware on {}".format(self._connector.get_address()))
 
     @contextlib.contextmanager
     def get_lock(self, **kwargs):
@@ -277,23 +280,26 @@ class Hardware(object):
 
 
 class VISAHardware(Hardware):
+    def __init__(self, connector):
+        super().__init__(connector)
+
     def clear(self):
-        self._connector.write("*CLS")
+        self._connector.write('*CLS')
 
     def get_event_status_enable(self):
-        return int(self._connector.query("*ESE?"))
+        return int(self._connector.query('*ESE?'))
 
     def get_event_status_opc(self):
-        return bool(self._connector.query("*OPC?"))
+        return bool(self._connector.query('*OPC?'))
 
     def get_service_request(self):
-        return bool(self._connector.query("*SRE?"))
+        return bool(self._connector.query('*SRE?'))
 
     def get_status(self):
-        return bool(self._connector.query("*STB?"))
+        return bool(self._connector.query('*STB?'))
 
     def get_event_status(self):
-        return int(self._connector.ask("*ESR?"))
+        return int(self._connector.ask('*ESR?'))
 
     def set_event_status_enable(self, mask):
         self._connector.write("*ESE {}".format(mask))
@@ -302,30 +308,30 @@ class VISAHardware(Hardware):
         self._connector.write("*SRE {}".format(mask))
 
     def set_event_status_opc(self):
-        self._connector.write("*OPC")
+        self._connector.write('*OPC')
 
     def get_id(self):
-        return self._connector.query("*IDN?")
+        return self._connector.query('*IDN?')
 
     def get_options(self):
-        return self._connector.query("*OPT?")
+        return self._connector.query('*OPT?')
 
     def reset(self):
-        self._connector.write("*RST")
+        self._connector.write('*RST')
         self._connector.reset()
 
     def trigger(self):
-        self._connector.write("*TRG")
+        self._connector.write('*TRG')
 
     def wait(self):
-        self._connector.write("*WAI")
+        self._connector.write('*WAI')
 
     def wait_measurement(self):
-        self._connector.query("*OPC?")
+        self._connector.query('*OPC?')
 
     @staticmethod
     def _cast_bool(value):
-        return "ON" if value else "OFF"
+        return 'ON' if value else 'OFF'
 
 
 class FrequencyCounter(VISAHardware):
@@ -333,7 +339,8 @@ class FrequencyCounter(VISAHardware):
 
 
 class MassFlowController(Hardware):
-    pass
+    def __init__(self, connector):
+        super().__init__(connector)
 
 
 class Oscilloscope(VISAHardware):
@@ -341,14 +348,17 @@ class Oscilloscope(VISAHardware):
 
 
 class PowerSupply(VISAHardware):
+    def __init__(self, connector):
+        super().__init__(connector)
+
     def clear_alarm(self):
-        self._connector.write(":OUTP:PROT:CLE")
+        self._connector.write(':OUTP:PROT:CLE')
 
     def get_current(self):
-        return float(self._connector.query(":MEAS:CURR?"))
+        return float(self._connector.query(':MEAS:CURR?'))
 
     def get_voltage(self):
-        return float(self._connector.query(":MEAS?"))
+        return float(self._connector.query(':MEAS?'))
 
     def get_power(self):
         return self.get_voltage() * self.get_current()
@@ -372,11 +382,14 @@ class SignalGenerator(VISAHardware):
         external_front = 'EXT1'
         external_rear = 'EXT2'
 
+    def __init__(self, connector):
+        super().__init__(connector)
+
     def set_output(self, enabled):
         self._connector.write(":OUTP:STAT {}".format(VISAHardware._cast_bool(enabled)))
 
     def set_frequency(self, frequency):
-        self._connector.write(":FREQ:MODE CW")
+        self._connector.write(':FREQ:MODE CW')
         self._connector.write(":FREQ {}".format(frequency))
 
     def set_power(self, power):
@@ -389,9 +402,9 @@ class SignalGenerator(VISAHardware):
         self._connector.write(":PULM:SOUR {}".format(source.value))
 
         if source is self.PulseModSource.internal_pulse:
-            self._connector.write(":PULM:INT:FUNC:SHAP PULS")
+            self._connector.write(':PULM:INT:FUNC:SHAP PULS')
         elif source is self.PulseModSource.internal_square:
-            self._connector.write(":PULM:INT:FUNC:SHAP SQU")
+            self._connector.write(':PULM:INT:FUNC:SHAP SQU')
 
     def set_pulse_count(self, count):
         self._connector.write(":PULM:COUN {}".format(count))
@@ -415,8 +428,6 @@ class TemperatureLogger(Hardware):
 
     def __init__(self, connector):
         super().__init__(connector)
-
-        self._log.debug("TemperatureLogger on ".format(connector.get_address()))
 
     def get_temperature(self, channel=None):
         payload_data = self._connector.query(TemperatureLogger._PAYLOAD_REQUEST, TemperatureLogger._PAYLOAD_SIZE)

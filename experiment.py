@@ -1,5 +1,6 @@
 # -- coding: utf-8 --
 
+import code
 import datetime
 import logging
 import time
@@ -7,16 +8,18 @@ import time
 __author__ = 'chris'
 
 
+class ExperimentException(Exception):
+    pass
+
+
 class ExperimentConfigurationException(Exception):
     pass
 
 
 class Experiment(object):
-    def __init__(self, config):
-        self._config = config
-
-        self._label = config.pop('label')
-        self._primary = config.get('primary', True)
+    def __init__(self, label, primary=True):
+        self._label = label
+        self._primary = primary
 
         self._log = logging.getLogger(type(self).__name__)
         self._log.debug("Created Experiment module {} ({} primary key)".format(self._label,
@@ -53,7 +56,7 @@ class Experiment(object):
     def get_primary_key_field(self):
         primary_key = self._primary_key_field()
 
-        if not primary_key:
+        if primary_key is None:
             return None
 
         if type(primary_key) is tuple:
@@ -77,15 +80,18 @@ class Experiment(object):
 
 
 class _SteppedExperiment(Experiment):
-    def __init__(self, config, field):
-        super().__init__(config)
+    def __init__(self, label, step_values, primary=True):
+        super().__init__(label, primary)
 
-        self._field = field
+        self._step_values = step_values
 
         self._current_step = 0
         self._next_step = 0
 
     def step(self):
+        if self._next_step > self._step_maximum():
+            raise ExperimentException()
+
         self._current_step = self._next_step
         self._next_step += 1
 
@@ -95,7 +101,7 @@ class _SteppedExperiment(Experiment):
         self._current_step = 0
         self._next_step = 0
 
-        self._log.info('Step reset')
+        self._log.info('Steps reset')
 
     def has_next(self):
         return self._next_step < self._step_maximum()
@@ -108,44 +114,53 @@ class _SteppedExperiment(Experiment):
 
     def _get_state(self):
         return {
-            self._field + '_step': self._get_step()
+            'step': self._get_step()
         }
 
     def _primary_key_field(self):
         raise NotImplementedError()
 
     def _step_maximum(self):
-        if type(self._config[self._field]) is list:
-            return len(self._config[self._field])
+        if type(self._step_values) is list:
+            return len(self._step_values)
         else:
             return 1
 
     def _get_step(self):
         return self._current_step
 
+    def _get_step_value(self):
+        return self._step_values[self._current_step]
 
-class _IncrementExperiment(_SteppedExperiment):
-    def __init__(self, config, field):
-        super().__init__(config, field)
 
-    def _get_state(self):
-        return {
-            self._field + '_increment': self._get_step()
-        }
+class RepeatExperiment(Experiment):
+    def __init__(self, label, maximum, primary=True):
+        super().__init__(label, primary)
 
-    def _primary_key_field(self):
-        raise NotImplementedError()
+        self._count = 0
+        self._maximum = maximum
 
-    def _step_maximum(self):
-        return int(self._config.get(self._field, 1))
+    def step(self):
+        self._count += 1
+
+    def reset(self):
+        self._count = 0
+
+    def has_next(self):
+        return self._count < self._maximum
+
+    def get_resume_state(self):
+        return self._count, self._maximum
+
+    def set_resume_state(self, state):
+        self._count, self._maximum = state
 
 
 class FlowExperiment(_SteppedExperiment):
-    def __init__(self, config):
-        super().__init__(config, 'flow_rate')
+    def __init__(self, label, mfc_connector, mfc_flow_rate, primary=True):
+        super().__init__(label, mfc_flow_rate, primary)
 
-        self._flow_rate = config['flow_rate']
-        self._channels = len(self._flow_rate[0])
+        self._channels = len(mfc_flow_rate[0])
 
         self._log.info("Setup {} channel mass flow controller".format(self._channels))
 
@@ -155,11 +170,12 @@ class FlowExperiment(_SteppedExperiment):
     def step(self):
         super().step()
 
-        flow_rate = self._get_flow()
+        flow_rate = self._get_step_value()
 
         self._log.info("Flow rate: {} sccm".format(' sccm, '.join([str(x) for x in flow_rate])))
 
     def stop(self):
+        # TODO Shutdown
         pass
 
     def set_resume_state(self, state):
@@ -167,16 +183,13 @@ class FlowExperiment(_SteppedExperiment):
 
         # TODO Update controllers
 
-    def _get_flow(self):
-        return self._flow_rate[self._get_step()]
-
     def _get_state(self):
         # TODO Get actual values
 
         state = super()._get_state()
         state.update({
-            'target_flow': self._flow_rate[self._get_step()],
-            'flow': [0 for _ in range(len(self._get_flow()))]
+            'target_flow': self._get_step_value(),
+            'flow': [0 for _ in range(len(self._get_step_value()))]
         })
 
         return state
@@ -186,10 +199,8 @@ class FlowExperiment(_SteppedExperiment):
 
 
 class HumidityExperiment(_SteppedExperiment):
-    def __init__(self, config):
-        super().__init__(config, 'vgen_temperature')
-
-        self._vgen_temperature = config['vgen_temperature']
+    def __init__(self, label, vgen_connector, vgen_temperature, vgen_rtd_incline=None, vgen_rtd_intercept=None, primary=True):
+        super().__init__(label, vgen_temperature, primary)
 
         self._log.info('Setup VGen humidity controller')
 
@@ -199,7 +210,7 @@ class HumidityExperiment(_SteppedExperiment):
     def step(self):
         super().step()
 
-        temperature = self._get_vgen_temperature_target()
+        temperature = self._get_step_value()
 
         self._log.info("Saturator: {} °C, Condenser: {} °C".format(temperature[0], temperature[1]))
 
@@ -211,22 +222,19 @@ class HumidityExperiment(_SteppedExperiment):
 
         # TODO Update controllers
 
-    def _get_vgen_temperature_target(self):
-        return self._vgen_temperature[self._get_step()]
-
     def _get_state(self):
         # TODO Get actual values
 
-        temperature = self._get_vgen_temperature_target()
+        temperature = self._get_step_value()
 
         state = super()._get_state()
         state.update({
             'relative_humidity': 0,
             'output_temperature': 0,
             'condenser_temperature': 0,
-            'condenser_temperature_target': 0,
+            'condenser_temperature_target': temperature[1],
             'saturator_temperature': 0,
-            'saturator_temperature_target': 0,
+            'saturator_temperature_target': temperature[0],
             'external_temperature': 0
         })
 
@@ -237,28 +245,15 @@ class HumidityExperiment(_SteppedExperiment):
 
 
 class RegulatedTemperatureExperiment(_SteppedExperiment):
-    def __init__(self, config):
-        super().__init__(config, 'temperature')
+    def __init__(self, label, probe_connector, supply_connector, temperature, regulator=None, primary=True):
+        super().__init__(label, temperature, primary)
 
         # Hardware setup
-        self._regulator_probe_id = config['probe']
-        self._regulator_supply_id = config['supply']
+        self._regulator_probe_id = probe_connector
+        self._regulator_supply_id = supply_connector
 
-        if 'regulator' in config:
-            config_regulator = config['regulator']
-        else:
-            config_regulator = {}
-
-        self._regulator_pid = {
-            'p': config_regulator.get('p', 1),
-            'i': config_regulator.get('i', 0),
-            'd': config_regulator.get('d', 0),
-            'period': config_regulator.get('period', 1),
-            'limit': (config_regulator.get('out_min', None), config_regulator.get('out_max', None))
-        }
-
-        # Experimental parameters
-        self._device_temperature = config['temperature']
+        # TODO create PID loop
+        self._regulator = regulator
 
         self._log.info('Setup temperature regulator')
 
@@ -268,7 +263,7 @@ class RegulatedTemperatureExperiment(_SteppedExperiment):
     def step(self):
         super().step()
 
-        device_temperature = self._get_temperature_target()
+        device_temperature = self._get_step_value()
 
         self._log.info("Device temperature: {} °C".format(device_temperature))
 
@@ -281,14 +276,11 @@ class RegulatedTemperatureExperiment(_SteppedExperiment):
 
         # TODO Update controllers
 
-    def _get_temperature_target(self):
-        return self._device_temperature[self._get_step()]
-
     def _get_state(self):
         state = super()._get_state()
         state.update({
             'temperature': 0,
-            'temperature_target': self._get_temperature_target(),
+            'temperature_target': self._get_step_value(),
             'supply_voltage': 0,
             'supply_current': 0
         })
@@ -300,10 +292,10 @@ class RegulatedTemperatureExperiment(_SteppedExperiment):
 
 
 class TimeExperiment(_SteppedExperiment):
-    def __init__(self, config):
-        super().__init__(config, 'delay')
+    def __init__(self, label, delay, primary=True):
+        super().__init__(label, primary)
 
-        self._delay = config['delay']
+        self._delay = delay
 
         self._timer = time.time()
 
@@ -360,7 +352,7 @@ class TimeExperiment(_SteppedExperiment):
                     self._log.error("Sleep interrupted by user")
 
                     while True:
-                        print('Select an option:\n\tn: Next step\n\ts: Stop\n\tr: Resume\n')
+                        print('Select an option:\n\tn: Next step\n\ts: Stop\n\tr: Resume\n\rd: Debug\n')
 
                         cmd = input('Command: ')
 
@@ -383,6 +375,9 @@ class TimeExperiment(_SteppedExperiment):
                                 self._log.error('User resumed sleep but timer has expired')
 
                             break
+                        elif cmd in ['d', 'debug']:
+                            self._log.warn('Dropping to interactive shell')
+                            code.interact(local=locals())
                         else:
                             print('Command not recognised')
         else:
@@ -390,10 +385,10 @@ class TimeExperiment(_SteppedExperiment):
 
 
 class SynchronisedTimeExperiment(TimeExperiment):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, label, delay, sync_on_first=False, primary=True):
+        super().__init__(label, delay, primary)
 
-        self._sync_on_first = config.get('sync_on_first', False)
+        self._sync_on_first = sync_on_first
         self._first = False
 
     def reset(self):
@@ -436,5 +431,5 @@ class SynchronisedTimeExperiment(TimeExperiment):
         return None
 
 
-class ExperimentStateExperiment(Experiment):
+class StateWaitExperiment(Experiment):
     pass

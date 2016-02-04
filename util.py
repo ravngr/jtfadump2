@@ -20,6 +20,11 @@ except ImportError:
 __author__ = 'chris'
 
 
+class LoggingBaseClass(object):
+    def __init__(self):
+        self._log = logging.getLogger(type(self).__name__)
+
+
 def rand_hex_str(length=8):
     return ''.join(random.choice(string.hexdigits[:16]) for _ in range(length))
 

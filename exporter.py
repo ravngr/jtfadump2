@@ -1,4 +1,5 @@
 import collections
+import data
 import logging
 import os
 import time
@@ -52,7 +53,7 @@ class Exporter(object):
 
         return os.path.join(self._result_directory, filename)
 
-    def export(self, identifier, data):
+    def export(self, identifier, export_data):
         raise NotImplementedError()
 
 
@@ -75,9 +76,9 @@ class _DelimitedTextExporter(Exporter):
         self._fields = None
         self._header_written = False
 
-    def export(self, identifier, data):
-        fields = data.keys()
-        values = data.values()
+    def export(self, identifier, export_data):
+        fields = export_data.keys()
+        values = export_data.values()
 
         with open(self._file_name, 'a') as f:
             if self._text_header is not None and not self._header_written:
@@ -89,54 +90,71 @@ class _DelimitedTextExporter(Exporter):
 
         self._log.debug("Appended to {}".format(self._file_name))
 
+        return self._file_name,
+
 
 class CSVExporter(_DelimitedTextExporter):
     EXTENSION = 'csv'
 
     def __init__(self, result_directory, **kwargs):
-        super().__init__(None, self.EXTENSION, result_directory, '', ', ', **kwargs)
+        super().__init__('csv', self.EXTENSION, result_directory, '', ', ', **kwargs)
 
 
 class MatfileExporter(Exporter):
     EXTENSION = 'mat'
 
     def __init__(self, result_directory, compress=True, **kwargs):
-        super().__init__(None, self.EXTENSION, result_directory, **kwargs)
+        super().__init__('matfile', self.EXTENSION, result_directory, **kwargs)
 
         self._compress = compress
 
-    def export(self, identifier, data):
+    def export(self, identifier, export_data):
         filename = self._generate_name(identifier)
 
-        sio.savemat(filename, data, do_compression=self._compress)
+        sio.savemat(filename, export_data, do_compression=self._compress)
 
         self._log.debug("Wrote to {}".format(filename))
+
+        return filename,
 
 
 class MKSPressureExporter(_DelimitedTextExporter):
     EXTENSION = 'pre'
 
     def __init__(self, result_directory, field=None, **kwargs):
-        super().__init__(None, self.EXTENSION, result_directory, None, '\t', **kwargs)
+        super().__init__('mks', self.EXTENSION, result_directory, None, '\t', **kwargs)
 
-        self._field = field
+        self._field_filter = data.generate_data_field_list(field)
 
-    def export(self, identifier, data):
+    def export(self, identifier, export_data):
         # Filter data fields
-        data_filtered = collections.OrderedDict()
+        export_data_filtered = collections.OrderedDict()
 
         if self._field_filter:
             for field in self._field_filter:
-                if type(field) is tuple and field[0] in data:
-                    data_filtered[field[0]] = data[field[0]][field[1]]
-                elif type(field) is list and field in data:
-                    data_filtered[field] = data[field]
+                if field.in_dict(export_data):
+                    export_data_filtered[field.name] = field.get_value(export_data)
                 else:
-                    data_filtered[field] = ''
+                    export_data_filtered[field.name] = ''
 
-            super(MKSPressureExporter, self).export(identifier, data_filtered)
+            return super(MKSPressureExporter, self).export(identifier, export_data_filtered)
         else:
-            super(MKSPressureExporter, self).export(identifier, data)
+            return super(MKSPressureExporter, self).export(identifier, export_data)
+
+
+class SummaryLogExporter(Exporter):
+    def __init__(self, level, field, **kwargs):
+        super().__init__(None, None, **kwargs)
+
+        self._level = logging.getLevelName(level)
+        self._field_filter = data.generate_data_field_list(field)
+
+    def export(self, identifier, export_data):
+        for field in self._field_filter:
+            if field.in_dict(export_data):
+                self._log.log(self._level, field.to_str(field.get_value(export_data)))
+
+        return None
 
 
 class SummaryTextExporter(Exporter):
@@ -150,12 +168,12 @@ class SummaryTextExporter(Exporter):
 
         self._line_format = line_format if line_format else self._LINE_FORMAT
 
-    def export(self, identifier, data):
+    def export(self, identifier, export_data):
         filename = self._generate_name(identifier)
 
         with open(filename, 'a') as f:
-            for key in sorted(data):
-                value = data[key]
+            for key in sorted(export_data):
+                value = export_data[key]
 
                 # Skip unsupported or long fields
                 if type(value) is dict:
@@ -166,3 +184,5 @@ class SummaryTextExporter(Exporter):
                 f.write(self._line_format.format(key=key, value=str(value)))
 
         self._log.debug("Wrote to {}".format(filename))
+
+        return filename,
