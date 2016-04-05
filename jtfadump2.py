@@ -159,7 +159,7 @@ def main():
     except OSError:
         git_hash = 'not found'
 
-    root_logger.info("jtfadump2 | git hash: {}".format(git_hash))
+    root_logger.info("jtfadump2 {} | git hash: {}".format(__version__, git_hash))
     root_logger.info("python {}".format(sys.version))
 
     for m in [('pyserial', serial.VERSION), (pyvisa.__name__, pyvisa.__version__), ('pyyaml', yaml.__version__)]:
